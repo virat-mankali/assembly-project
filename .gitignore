@@ -1,0 +1,7 @@
+.env
+.venv/
+__pycache__/
+*.py[cod]
+database/*.db
+*.docx
+.DS_Store
