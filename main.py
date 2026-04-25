@@ -8,7 +8,13 @@ from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandl
 from config import TELEGRAM_BOT_TOKEN, validate_runtime_config
 from docx_generator import generate_docx
 from formatter import chat_with_memory, format_transcript
-from memory import get_history, init_db, save_approved_version, save_message
+from memory import (
+    get_history,
+    get_recent_approved_versions,
+    init_db,
+    save_approved_version,
+    save_message,
+)
 from transcriber import transcribe_audio
 
 
@@ -27,9 +33,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not update.message or not update.message.effective_attachment:
+    if not update.message or not update.message.effective_attachment or not update.effective_user:
         return
 
+    user_id = update.effective_user.id
     status_message = await update.message.reply_text("Audio processing started...")
     audio_path = ""
     docx_path = ""
@@ -47,7 +54,8 @@ async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         transcript = transcribe_audio(audio_path)
 
         await status_message.edit_text("Formatting proceedings...")
-        formatted = format_transcript(transcript)
+        examples = get_recent_approved_versions(user_id, limit=3)
+        formatted = format_transcript(transcript, few_shot_examples=examples)
 
         await status_message.edit_text("Generating DOCX...")
         docx_path = generate_docx(formatted, session_label="Assembly Proceedings")
