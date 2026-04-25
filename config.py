@@ -11,6 +11,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 GEMINI_MODEL = "gemini-2.5-flash-preview-04-17"
 MAX_AUDIO_SIZE_MB = 25
+DB_PATH = os.getenv("DB_PATH", "database/bot_memory.db")
 
 
 def require_env(name: str, value: str | None) -> str:
