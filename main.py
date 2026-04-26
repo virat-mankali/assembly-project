@@ -1,5 +1,6 @@
 import logging
 import os
+from pathlib import Path
 import tempfile
 
 from telegram import Update
@@ -24,6 +25,36 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+SUPPORTED_AUDIO_SUFFIXES = {".flac", ".mp3", ".mp4", ".mpeg", ".mpga", ".m4a", ".ogg", ".opus", ".wav", ".webm"}
+MIME_AUDIO_SUFFIXES = {
+    "audio/flac": ".flac",
+    "audio/mpeg": ".mp3",
+    "audio/mp3": ".mp3",
+    "audio/mp4": ".mp4",
+    "audio/mpga": ".mpga",
+    "audio/m4a": ".m4a",
+    "audio/ogg": ".ogg",
+    "audio/opus": ".opus",
+    "audio/wav": ".wav",
+    "audio/x-wav": ".wav",
+    "audio/webm": ".webm",
+}
+
+
+def get_audio_suffix(attachment, telegram_file) -> str:
+    file_path = getattr(telegram_file, "file_path", "") or ""
+    suffix = Path(file_path).suffix.lower()
+    if suffix in SUPPORTED_AUDIO_SUFFIXES:
+        return suffix
+
+    file_name = getattr(attachment, "file_name", "") or ""
+    suffix = Path(file_name).suffix.lower()
+    if suffix in SUPPORTED_AUDIO_SUFFIXES:
+        return suffix
+
+    mime_type = getattr(attachment, "mime_type", "") or ""
+    return MIME_AUDIO_SUFFIXES.get(mime_type.lower(), ".mp3")
+
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.message:
@@ -44,8 +75,9 @@ async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     try:
         attachment = update.message.effective_attachment
         telegram_file = await attachment.get_file()
+        audio_suffix = get_audio_suffix(attachment, telegram_file)
 
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".audio") as tmp_audio:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=audio_suffix) as tmp_audio:
             audio_path = tmp_audio.name
 
         await telegram_file.download_to_drive(audio_path)
@@ -58,7 +90,7 @@ async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         formatted = format_transcript(transcript, few_shot_examples=examples)
 
         await status_message.edit_text("Generating DOCX...")
-        docx_path = generate_docx(formatted, session_label="Assembly Proceedings")
+        docx_path = generate_docx(formatted)
 
         await status_message.edit_text("Done. Sending file...")
         with open(docx_path, "rb") as docx_file:

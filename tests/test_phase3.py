@@ -7,14 +7,20 @@ import main
 
 
 class FakeTelegramFile:
+    file_path = "https://api.telegram.org/file/bot-token/music/file_1.mp3"
+
     async def download_to_drive(self, path: str) -> None:
+        self.download_path = path
         with open(path, "wb") as audio_file:
             audio_file.write(b"audio")
 
 
 class FakeAttachment:
+    def __init__(self) -> None:
+        self.telegram_file = FakeTelegramFile()
+
     async def get_file(self) -> FakeTelegramFile:
-        return FakeTelegramFile()
+        return self.telegram_file
 
 
 class FakeStatusMessage:
@@ -76,6 +82,8 @@ class Phase3Tests(unittest.IsolatedAsyncioTestCase):
         ):
             await main.handle_audio(update, context=None)
 
+        audio_path = update.message.effective_attachment.telegram_file.download_path
+        self.assertTrue(audio_path.endswith(".mp3"))
         get_examples.assert_called_once_with(42, limit=3)
         format_transcript.assert_called_once_with(
             "raw transcript",
@@ -84,4 +92,3 @@ class Phase3Tests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(update.message.sent_document["filename"], "proceedings.docx")
         self.assertTrue(update.message.status_message.deleted)
         self.assertFalse(os.path.exists(docx.name))
-

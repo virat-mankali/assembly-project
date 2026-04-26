@@ -12,7 +12,7 @@
 |---|---|
 | Bot framework | `python-telegram-bot` v21 |
 | Transcription | Groq API — `whisper-large-v3` |
-| Formatting/AI | Google Gemini `gemini-2.5-flash-preview` (not Flash, not Pro — the 2.5 middle tier) |
+| Formatting/AI | Google Gemini `gemini-2.5-pro` |
 | Memory | SQLite via `sqlite3` (stdlib) |
 | Document generation | `python-docx` |
 | Hosting | Render (free tier, always-on web service) |
@@ -81,7 +81,7 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-GEMINI_MODEL = "gemini-2.5-flash-preview-04-17"  # update if newer version releases
+GEMINI_MODEL = "gemini-2.5-pro"
 MAX_AUDIO_SIZE_MB = 25  # Groq limit
 ```
 
@@ -533,7 +533,7 @@ git commit -m "initial commit"
 
 ## Important Notes for Your AI Coding Agent
 
-1. **Gemini model name** — Use `gemini-2.5-flash-preview-04-17`. Check [ai.google.dev](https://ai.google.dev) for latest model string before coding, it changes.
+1. **Gemini model name** — Use `gemini-2.5-pro`.
 
 2. **Groq audio limit** — 25MB per file. If dad's recordings are longer, split with `pydub` before sending to Groq.
 
