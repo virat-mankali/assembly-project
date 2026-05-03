@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -69,26 +70,56 @@ class Phase3Tests(unittest.IsolatedAsyncioTestCase):
         docx = tempfile.NamedTemporaryFile(delete=False, suffix=".docx")
         docx.write(b"docx")
         docx.close()
+        chunks = ["/tmp/chunk_000.mp3", "/tmp/chunk_001.mp3"]
 
         with (
-            patch.object(main, "transcribe_audio", return_value="raw transcript"),
+            patch.object(main, "split_audio", return_value=chunks) as split_audio,
+            patch.object(
+                main,
+                "transcribe_audio",
+                side_effect=["raw transcript 1", "raw transcript 2"],
+            ) as transcribe_audio,
             patch.object(
                 main,
                 "get_recent_approved_versions",
                 return_value=["approved example"],
             ) as get_examples,
-            patch.object(main, "format_transcript", return_value="formatted") as format_transcript,
-            patch.object(main, "generate_docx", return_value=docx.name),
+            patch.object(
+                main,
+                "format_transcript",
+                side_effect=["formatted 1", "formatted 2"],
+            ) as format_transcript,
+            patch.object(main, "generate_docx", return_value=docx.name) as generate_docx,
         ):
             await main.handle_audio(update, context=None)
 
         audio_path = update.message.effective_attachment.telegram_file.download_path
         self.assertTrue(audio_path.endswith(".mp3"))
+        split_audio.assert_called_once()
+        self.assertEqual(Path(split_audio.call_args.args[0]).suffix, ".mp3")
         get_examples.assert_called_once_with(42, limit=3)
-        format_transcript.assert_called_once_with(
-            "raw transcript",
-            few_shot_examples=["approved example"],
+        self.assertEqual([call.args[0] for call in transcribe_audio.call_args_list], chunks)
+        self.assertEqual(
+            [call.kwargs["chunk_label"] for call in format_transcript.call_args_list],
+            ["chunk 1 of 2", "chunk 2 of 2"],
         )
+        self.assertEqual(
+            [call.kwargs["include_session_header"] for call in format_transcript.call_args_list],
+            [True, False],
+        )
+        format_transcript.assert_any_call(
+            "raw transcript 1",
+            few_shot_examples=["approved example"],
+            chunk_label="chunk 1 of 2",
+            include_session_header=True,
+        )
+        format_transcript.assert_any_call(
+            "raw transcript 2",
+            few_shot_examples=["approved example"],
+            chunk_label="chunk 2 of 2",
+            include_session_header=False,
+        )
+        generate_docx.assert_called_once_with("formatted 1\n\nformatted 2")
         self.assertEqual(update.message.sent_document["filename"], "proceedings.docx")
         self.assertTrue(update.message.status_message.deleted)
         self.assertFalse(os.path.exists(docx.name))

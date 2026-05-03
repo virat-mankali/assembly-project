@@ -6,7 +6,8 @@ import tempfile
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
-from config import TELEGRAM_BOT_TOKEN, validate_runtime_config
+from audio_splitter import split_audio
+from config import AUDIO_CHUNK_SECONDS, TELEGRAM_BOT_TOKEN, validate_runtime_config
 from docx_generator import generate_docx
 from formatter import chat_with_memory, format_transcript
 from memory import (
@@ -71,6 +72,7 @@ async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     status_message = await update.message.reply_text("Audio processing started...")
     audio_path = ""
     docx_path = ""
+    chunk_dir = ""
 
     try:
         attachment = update.message.effective_attachment
@@ -82,12 +84,31 @@ async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
         await telegram_file.download_to_drive(audio_path)
 
-        await status_message.edit_text("Transcribing audio...")
-        transcript = transcribe_audio(audio_path)
+        chunk_dir = tempfile.mkdtemp(prefix="assembly_chunks_")
+        await status_message.edit_text("Splitting audio into 2-minute chunks...")
+        chunks = split_audio(audio_path, chunk_dir, chunk_seconds=AUDIO_CHUNK_SECONDS)
 
-        await status_message.edit_text("Formatting proceedings...")
         examples = get_recent_approved_versions(user_id, limit=3)
-        formatted = format_transcript(transcript, few_shot_examples=examples)
+        formatted_chunks = []
+
+        for index, chunk_path in enumerate(chunks, start=1):
+            total = len(chunks)
+            chunk_label = f"chunk {index} of {total}"
+
+            await status_message.edit_text(f"Transcribing {chunk_label}...")
+            transcript = transcribe_audio(chunk_path)
+
+            await status_message.edit_text(f"Formatting {chunk_label}...")
+            formatted_chunks.append(
+                format_transcript(
+                    transcript,
+                    few_shot_examples=examples,
+                    chunk_label=chunk_label,
+                    include_session_header=index == 1,
+                )
+            )
+
+        formatted = "\n\n".join(formatted_chunks)
 
         await status_message.edit_text("Generating DOCX...")
         docx_path = generate_docx(formatted)
@@ -110,6 +131,10 @@ async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         for path in (audio_path, docx_path):
             if path and os.path.exists(path):
                 os.unlink(path)
+        if chunk_dir and os.path.exists(chunk_dir):
+            import shutil
+
+            shutil.rmtree(chunk_dir)
 
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

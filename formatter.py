@@ -11,6 +11,8 @@ def _configure_gemini() -> None:
 def format_transcript(
     raw_transcript: str,
     few_shot_examples: list[str] | None = None,
+    chunk_label: str | None = None,
+    include_session_header: bool = True,
 ) -> str:
     if not raw_transcript.strip():
         raise ValueError("Transcript is empty")
@@ -33,6 +35,19 @@ def format_transcript(
 Now format this new transcript following the same style:
 
 {raw_transcript}"""
+
+    if chunk_label or not include_session_header:
+        chunk_instructions = []
+        if chunk_label:
+            chunk_instructions.append(f"This transcript is {chunk_label}.")
+        if not include_session_header:
+            chunk_instructions.append(
+                "Do not include the session header for this chunk; the final document already has one."
+            )
+        chunk_instructions.append(
+            "Format only this chunk. Preserve speaker order and spoken wording exactly."
+        )
+        prompt = f"{' '.join(chunk_instructions)}\n\n{prompt}"
 
     response = model.generate_content(prompt)
     return response.text.strip()

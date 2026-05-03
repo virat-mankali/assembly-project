@@ -15,6 +15,7 @@
 | Formatting/AI | Google Gemini `gemini-2.5-pro` |
 | Memory | SQLite via `sqlite3` (stdlib) |
 | Document generation | `python-docx` |
+| Audio chunking | `ffmpeg` CLI, 2-minute chunks |
 | Hosting | Render (free tier, always-on web service) |
 | Language | Python 3.11+ |
 
@@ -46,6 +47,7 @@ assembly-bot/
 TELEGRAM_BOT_TOKEN=
 GROQ_API_KEY=
 GEMINI_API_KEY=
+AUDIO_CHUNK_SECONDS=120
 ```
 
 ---
