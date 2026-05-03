@@ -12,7 +12,7 @@
 |---|---|
 | Bot framework | `python-telegram-bot` v21 |
 | Transcription | Groq API — `whisper-large-v3` |
-| Formatting/AI | Google Gemini `gemini-2.5-pro` |
+| Formatting/AI | Claude Agent SDK via OpenRouter |
 | Memory | SQLite via `sqlite3` (stdlib) |
 | Document generation | `python-docx` |
 | Audio chunking | `ffmpeg` CLI, 2-minute chunks |
@@ -27,7 +27,7 @@
 assembly-bot/
 ├── main.py                  # Entry point, Telegram bot handlers
 ├── transcriber.py           # Groq Whisper integration
-├── formatter.py             # Gemini formatting logic
+├── formatter.py             # Claude Agent SDK/OpenRouter formatting logic
 ├── memory.py                # SQLite memory + conversation history
 ├── docx_generator.py        # python-docx output
 ├── config.py                # All env vars and constants
@@ -46,7 +46,8 @@ assembly-bot/
 ```env
 TELEGRAM_BOT_TOKEN=
 GROQ_API_KEY=
-GEMINI_API_KEY=
+OPENROUTER_API_KEY=
+OPENROUTER_MODEL=
 AUDIO_CHUNK_SECONDS=120
 ```
 
@@ -59,16 +60,17 @@ AUDIO_CHUNK_SECONDS=120
 ### Step 1.1 — Project Setup
 
 ```bash
-pip install python-telegram-bot groq google-generativeai python-docx python-dotenv
+pip install python-telegram-bot groq claude-agent-sdk python-docx python-dotenv
 ```
 
 `requirements.txt`:
 ```
 python-telegram-bot==21.5
 groq==0.11.0
-google-generativeai==0.8.0
+claude-agent-sdk==0.1.72
 python-docx==1.1.2
 python-dotenv==1.0.1
+httpx==0.27.2
 ```
 
 ### Step 1.2 — Config (`config.py`)
@@ -81,9 +83,9 @@ load_dotenv()
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "")
 
-GEMINI_MODEL = "gemini-2.5-pro"
 MAX_AUDIO_SIZE_MB = 25  # Groq limit
 ```
 
@@ -168,21 +170,19 @@ questions about the workflow. Keep responses short and practical.
 ### Step 1.5 — Formatter (`formatter.py`)
 
 ```python
-import google.generativeai as genai
-from config import GEMINI_API_KEY, GEMINI_MODEL
+import os
+
+from claude_agent_sdk import ClaudeAgentOptions, query
+from config import OPENROUTER_API_KEY, OPENROUTER_MODEL
 from prompts import FORMATTING_SYSTEM_PROMPT
 
-genai.configure(api_key=GEMINI_API_KEY)
 
-def format_transcript(raw_transcript: str, few_shot_examples: list[str] = None) -> str:
-    model = genai.GenerativeModel(
-        model_name=GEMINI_MODEL,
-        system_instruction=FORMATTING_SYSTEM_PROMPT
-    )
-    
+async def format_transcript(raw_transcript: str, few_shot_examples: list[str] = None) -> str:
+    os.environ["ANTHROPIC_BASE_URL"] = "https://openrouter.ai/api"
+    os.environ["ANTHROPIC_AUTH_TOKEN"] = OPENROUTER_API_KEY
+    os.environ["ANTHROPIC_API_KEY"] = ""
+
     prompt = raw_transcript
-    
-    # If we have approved examples from DB, inject them as few-shot
     if few_shot_examples:
         examples_text = "\n\n---APPROVED EXAMPLE---\n".join(few_shot_examples)
         prompt = f"""Here are examples of correctly formatted proceedings that were approved:
@@ -194,9 +194,19 @@ def format_transcript(raw_transcript: str, few_shot_examples: list[str] = None) 
 Now format this new transcript following the same style:
 
 {raw_transcript}"""
-    
-    response = model.generate_content(prompt)
-    return response.text
+
+    async for message in query(
+        prompt=prompt,
+        options=ClaudeAgentOptions(
+            allowed_tools=[],
+            system_prompt=FORMATTING_SYSTEM_PROMPT,
+            model=OPENROUTER_MODEL or None,
+        ),
+    ):
+        if hasattr(message, "result"):
+            return message.result.strip()
+
+    raise RuntimeError("Claude Agent SDK returned an empty response")
 ```
 
 ### Step 1.6 — DOCX Generator (`docx_generator.py`)
@@ -272,7 +282,7 @@ async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # Step 2: Format
         await msg.edit_text("📝 Formatting proceedings...")
-        formatted = format_transcript(transcript)
+        formatted = await format_transcript(transcript)
 
         # Step 3: Generate DOCX
         docx_path = generate_docx(formatted, session_label="Assembly Proceedings")
@@ -401,17 +411,18 @@ def get_recent_approved_versions(user_id: int, limit: int = 3) -> list[str]:
 Update `formatter.py` to support chat mode:
 
 ```python
-def chat_with_memory(user_message: str, history: list[dict]) -> str:
-    from prompts import CHAT_SYSTEM_PROMPT
-    
-    model = genai.GenerativeModel(
-        model_name=GEMINI_MODEL,
-        system_instruction=CHAT_SYSTEM_PROMPT
+async def chat_with_memory(user_message: str, history: list[dict]) -> str:
+    history_text = "\n\n".join(
+        f"{item['role']}: {' '.join(item['parts'])}" for item in history
     )
-    
-    chat = model.start_chat(history=history)
-    response = chat.send_message(user_message)
-    return response.text
+    prompt = f"""Conversation history:
+{history_text or "(no previous messages)"}
+
+User message:
+{user_message}
+
+Reply with only the assistant's response."""
+    return await _run_agent(prompt, CHAT_SYSTEM_PROMPT)
 ```
 
 ### Step 2.3 — Update `main.py` with chat + memory
@@ -430,7 +441,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     history = get_history(user_id, last_n=10)
     
     # Chat
-    response = chat_with_memory(user_text, history[:-1])  # exclude last msg, already in send
+    response = await chat_with_memory(user_text, history[:-1])  # exclude last msg, already in send
     
     # Save bot response
     save_message(user_id, "model", response)
@@ -480,10 +491,10 @@ This is already wired in Phase 1's `format_transcript()` — just pass the examp
 ```python
 # In handle_audio(), update the format step:
 examples = get_recent_approved_versions(user_id, limit=3)
-formatted = format_transcript(transcript, few_shot_examples=examples)
+formatted = await format_transcript(transcript, few_shot_examples=examples)
 ```
 
-That's it. Gemini will see the last 3 approved versions as style references and match the formatting automatically. No retraining needed.
+That's it. Claude Agent SDK will see the last 3 approved versions as style references and match the formatting automatically. No retraining needed.
 
 ---
 
@@ -503,7 +514,9 @@ services:
         sync: false
       - key: GROQ_API_KEY
         sync: false
-      - key: GEMINI_API_KEY
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: OPENROUTER_MODEL
         sync: false
 ```
 
@@ -535,7 +548,7 @@ git commit -m "initial commit"
 
 ## Important Notes for Your AI Coding Agent
 
-1. **Gemini model name** — Use `gemini-2.5-pro`.
+1. **OpenRouter model** — Set `OPENROUTER_MODEL` when you want to pin a specific Claude model route.
 
 2. **Groq audio limit** — 25MB per file. If dad's recordings are longer, split with `pydub` before sending to Groq.
 
@@ -543,7 +556,7 @@ git commit -m "initial commit"
 
 4. **Telegram file size limit** — Bots can receive files up to 20MB via `get_file()`. For larger audio, dad needs to compress or split.
 
-5. **`[?word?]` convention** — This is the uncertain word marker. Make sure the Gemini prompt explicitly instructs this and the bot's reply message mentions it.
+5. **`[?word?]` convention** — This is the uncertain word marker. Make sure the formatting prompt explicitly instructs this and the bot's reply message mentions it.
 
 6. **`/final` command** — Keep the final version submission simple. Dad just sends the docx back with caption "final" — no complex command needed.
 

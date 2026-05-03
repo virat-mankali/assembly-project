@@ -1,3 +1,4 @@
+import inspect
 import logging
 import os
 from pathlib import Path
@@ -40,6 +41,12 @@ MIME_AUDIO_SUFFIXES = {
     "audio/x-wav": ".wav",
     "audio/webm": ".webm",
 }
+
+
+async def _resolve_maybe_awaitable(value):
+    if inspect.isawaitable(value):
+        return await value
+    return value
 
 
 def get_audio_suffix(attachment, telegram_file) -> str:
@@ -100,11 +107,13 @@ async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
             await status_message.edit_text(f"Formatting {chunk_label}...")
             formatted_chunks.append(
-                format_transcript(
-                    transcript,
-                    few_shot_examples=examples,
-                    chunk_label=chunk_label,
-                    include_session_header=index == 1,
+                await _resolve_maybe_awaitable(
+                    format_transcript(
+                        transcript,
+                        few_shot_examples=examples,
+                        chunk_label=chunk_label,
+                        include_session_header=index == 1,
+                    )
                 )
             )
 
@@ -149,7 +158,9 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     try:
         save_message(user_id, "user", user_text)
         history = get_history(user_id, last_n=10)
-        response = chat_with_memory(user_text, history[:-1])
+        response = await _resolve_maybe_awaitable(
+            chat_with_memory(user_text, history[:-1])
+        )
         save_message(user_id, "model", response)
         await update.message.reply_text(response)
     except Exception:
